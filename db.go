@@ -1,6 +1,7 @@
 package sqlxentrypoint
 
 import (
+	"database/sql"
 	"github.com/jmoiron/sqlx"
 	"strings"
 	"sync/atomic"
@@ -30,6 +31,30 @@ func Open(driverName, dataSourceNames string) (*DB, error) {
 	}
 
 	return db, nil
+}
+
+// DataSourceOpener provides a ready-to-use *sql.DB from outside of sqlx
+type DataSourceOpener interface {
+	Open(driverName, dataSource string) (*sql.DB, error)
+}
+
+// OpenEx is a version of Open that uses DataSourceOpener in conjunction with sqlx.NewDB
+func OpenEx(driverName, dataSourceNames string, dataSourceOpener DataSourceOpener) (*DB, error) {
+	conns := strings.Split(dataSourceNames, ";")
+	db := &DB{pdbs: make([]*sqlx.DB, len(conns))}
+
+	err := scatter(len(db.pdbs), func(i int) (err error) {
+		conn, err := dataSourceOpener.Open(driverName, conns[i])
+		db.pdbs[i] = sqlx.NewDb(conn, driverName)
+		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
+
 }
 
 // Close closes all physical databases concurrently, releasing any open resources.
